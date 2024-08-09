@@ -140,7 +140,6 @@ def _controller_v1_handler(req: V1RequestBase) -> V1ResponseBase:
 
     return res
 
-
 def _cmd_request_get(req: V1RequestBase) -> V1ResponseBase:
     # do some validations
     if req.url is None:
@@ -153,6 +152,23 @@ def _cmd_request_get(req: V1RequestBase) -> V1ResponseBase:
         logging.warning("Request parameter 'download' was removed in FlareSolverr v2.")
 
     challenge_res = _resolve_challenge(req, 'GET')
+    res = V1ResponseBase({})
+    res.status = challenge_res.status
+    res.message = challenge_res.message
+    res.solution = challenge_res.result
+    return res
+
+def _cmd_session_query(req: V1RequestBase) -> V1ResponseBase:
+    # do some validations
+    if req.url is None:
+        raise Exception("Request parameter 'url' is mandatory in 'session.query' command.")
+    if req.postData is not None:
+        raise Exception("Cannot use 'postBody' when querying a session.")
+    if req.returnRawHtml is not None:
+        logging.warning("Request parameter 'returnRawHtml' was removed in FlareSolverr v2.")
+    if req.download is not None:
+        logging.warning("Request parameter 'download' was removed in FlareSolverr v2.")
+
     res = V1ResponseBase({})
     res.status = challenge_res.status
     res.message = challenge_res.message
