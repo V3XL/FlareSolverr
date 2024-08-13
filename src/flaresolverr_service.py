@@ -1,3 +1,4 @@
+import json
 import logging
 import platform
 import sys
@@ -129,6 +130,8 @@ def _controller_v1_handler(req: V1RequestBase) -> V1ResponseBase:
         res = _cmd_sessions_create(req)
     elif req.cmd == 'sessions.list':
         res = _cmd_sessions_list(req)
+    elif req.cmd == 'sessions.query':
+        res = _cmd_sessions_query(req)
     elif req.cmd == 'sessions.destroy':
         res = _cmd_sessions_destroy(req)
     elif req.cmd == 'request.get':
@@ -158,7 +161,7 @@ def _cmd_request_get(req: V1RequestBase) -> V1ResponseBase:
     res.solution = challenge_res.result
     return res
 
-def _cmd_session_query(req: V1RequestBase) -> V1ResponseBase:
+def _cmd_sessions_query(req: V1RequestBase) -> V1ResponseBase:
     # do some validations
     if req.url is None:
         raise Exception("Request parameter 'url' is mandatory in 'session.query' command.")
@@ -168,10 +171,11 @@ def _cmd_session_query(req: V1RequestBase) -> V1ResponseBase:
         logging.warning("Request parameter 'returnRawHtml' was removed in FlareSolverr v2.")
     if req.download is not None:
         logging.warning("Request parameter 'download' was removed in FlareSolverr v2.")
-
+    
+    challenge_res = _resolve_challenge(req, 'GET')
     res = V1ResponseBase({})
     res.status = challenge_res.status
-    res.message = challenge_res.message
+    res.message = get_recaptcha_value(req)
     res.solution = challenge_res.result
     return res
 
@@ -267,6 +271,36 @@ def _resolve_challenge(req: V1RequestBase, method: str) -> ChallengeResolutionT:
             driver.quit()
             logging.debug('A used instance of webdriver has been destroyed')
 
+def get_recaptcha_value(req: V1RequestBase) -> str:
+
+    if req.session:
+        session_id = req.session
+        ttl = timedelta(minutes=req.session_ttl_minutes) if req.session_ttl_minutes else None
+        session, fresh = SESSIONS_STORAGE.get(session_id, ttl)
+        logging.debug(f"existing session is used to perform the request (session_id={session_id}, "
+                        f"lifetime={str(session.lifetime())}, ttl={str(ttl)})")
+        driver = session.driver
+        try:
+
+            # Wait until the reCAPTCHA element is present
+            WebDriverWait(driver, 10).until(
+                presence_of_element_located((By.ID, "g-recaptcha-response"))
+            )
+            
+            # Wait until the 'value' attribute is populated
+            WebDriverWait(driver, 20).until(
+                lambda d: driver.find_element(By.ID, "g-recaptcha-response").get_attribute('value') not in (None, '')
+            )
+            
+            recaptcha_element = driver.find_element(By.ID, "g-recaptcha-response")
+            return recaptcha_element.get_attribute('value')
+        except TimeoutException:
+            logging.error("Timed out waiting for reCAPTCHA element to load.")
+            #raise Exception("Timed out waiting for reCAPTCHA element to load.")      
+
+
+
+
 
 def click_verify(driver: WebDriver):
     try:
@@ -339,15 +373,24 @@ def _evil_logic(req: V1RequestBase, driver: WebDriver, method: str) -> Challenge
     # set cookies if required
     if req.cookies is not None and len(req.cookies) > 0:
         logging.debug(f'Setting cookies...')
+        
+        #Ensure that cookies are of type list
+        if not isinstance(req.cookies, list):
+            res.message = "The provided cookies aren't of type 'list'."
+            return res
+            
+        #logging.info(cookies);
         for cookie in req.cookies:
             driver.delete_cookie(cookie['name'])
-            driver.add_cookie(cookie)
+            driver.add_cookie(cookie)       
+
         # reload the page
         if method == 'POST':
             _post_request(req, driver)
         else:
             access_page(driver, req.url)
         driver = get_correct_window(driver)
+
 
     # wait for the page
     if utils.get_config_log_html():
